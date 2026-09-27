@@ -1,0 +1,214 @@
+"""SatQuery AI - visual grounding: overlays, heatmaps, detection boxes."""
+from __future__ import annotations
+
+import base64
+import io
+from typing import List, Optional
+
+import cv2
+import numpy as np
+from PIL import Image
+
+from .landcover import CLASS_COLORS, CLASSES, LandCover, class_mask, colorize
+
+
+def to_data_uri(arr: np.ndarray, fmt: str = "PNG", quality: int = 88) -> str:
+    im = Image.fromarray(arr)
+    buf = io.BytesIO()
+    if fmt.upper() in ("JPG", "JPEG"):
+        im.convert("RGB").save(buf, "JPEG", quality=quality)
+        mime = "image/jpeg"
+    else:
+        im.save(buf, "PNG", optimize=True)
+        mime = "image/png"
+    return f"data:{mime};base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def landcover_overlay(rgb: np.ndarray, lc: LandCover, alpha: float = 0.55) -> np.ndarray:
+    return cv2.addWeighted(rgb, 1 - alpha, colorize(lc), alpha, 0)
+
+
+def class_overlay(rgb: np.ndarray, lc: LandCover, classes: List[str],
+                  alpha: float = 0.60, boxes: Optional[List[List[int]]] = None) -> np.ndarray:
+    """Dim everything, light up the queried class(es), draw their outlines.
+
+    ``boxes`` (optional): real per-instance boxes from :func:`mask_to_boxes`,
+    drawn on top of the mask outline so grounding shows individual regions
+    instead of only the class silhouette.
+    """
+    m = class_mask(lc, classes)
+    base = (rgb.astype(np.float32) * 0.42).astype(np.uint8)   # dim background
+    out = base.copy()
+    tint = np.zeros_like(rgb)
+    for c in classes:
+        cm = class_mask(lc, [c])
+        tint[cm] = CLASS_COLORS.get(c, (255, 215, 0))
+    out[m] = cv2.addWeighted(rgb, 1 - alpha, tint, alpha, 0)[m]
+
+    cnts, _ = cv2.findContours(m.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(out, cnts, -1, (255, 255, 255), 1, cv2.LINE_AA)
+    if boxes:
+        out = boxes_overlay(out, boxes, color=(255, 255, 255))
+    return out
+
+
+def heatmap(rgb: np.ndarray, field: np.ndarray, alpha: float = 0.62,
+            cmap: int = cv2.COLORMAP_INFERNO) -> np.ndarray:
+    f = field.astype(np.float32)
+    lo, hi = float(np.nanmin(f)), float(np.nanmax(f))
+    n = (f - lo) / (hi - lo + 1e-6)
+    cm = cv2.applyColorMap((n * 255).astype(np.uint8), cmap)
+    cm = cv2.cvtColor(cm, cv2.COLOR_BGR2RGB)
+    return cv2.addWeighted(rgb, 1 - alpha, cm, alpha, 0)
+
+
+def change_overlay(rgb2: np.ndarray, mag: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    base = (rgb2.astype(np.float32) * 0.5).astype(np.uint8)
+    cm = cv2.applyColorMap((np.clip(mag, 0, 1) * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
+    cm = cv2.cvtColor(cm, cv2.COLOR_BGR2RGB)
+    out = base.copy()
+    out[mask] = cv2.addWeighted(rgb2, 0.32, cm, 0.68, 0)[mask]
+    cnts, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(out, [c for c in cnts if cv2.contourArea(c) > 30], -1,
+                     (255, 40, 40), 1, cv2.LINE_AA)
+    return out
+
+
+def mask_to_boxes(mask: np.ndarray, min_area_px: int = 24) -> List[List[int]]:
+    """Real per-instance bounding boxes from a binary mask.
+
+    Replaces the old "one box spanning the whole mask" grounding with actual
+    connected-component boxes (resource.md §3B "Grounding upgrade"). Still a
+    classical CV step, not a learned detector (GroundingDINO comes later) —
+    but the caller now gets N real boxes instead of a single bounding extent.
+    Sorted largest-first so callers can cap to top-K.
+    """
+    n, _, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+    boxes = []
+    for i in range(1, n):  # label 0 is background
+        x, y, w, h, area = stats[i]
+        if area < min_area_px:
+            continue
+        boxes.append([int(x), int(y), int(w), int(h)])
+    boxes.sort(key=lambda b: -(b[2] * b[3]))
+    return boxes
+
+
+def boxes_overlay(rgb: np.ndarray, boxes: List[List[int]],
+                  color: tuple = (255, 215, 0)) -> np.ndarray:
+    """Draw a flat list of [x, y, w, h] boxes (no per-kind palette lookup)."""
+    out = rgb.copy()
+    for x, y, w, h in boxes:
+        cv2.rectangle(out, (x, y), (x + w, y + h), color, 2, cv2.LINE_AA)
+    return out
+
+
+def detections_overlay(rgb: np.ndarray, dets, kinds: Optional[List[str]] = None) -> np.ndarray:
+    out = (rgb.astype(np.float32) * 0.62).astype(np.uint8)
+    palette = {"vessel": (255, 92, 92), "bright_target": (255, 214, 64),
+               "linear": (80, 220, 255)}
+    for d in dets:
+        if kinds and d.kind not in kinds:
+            continue
+        col = palette.get(d.kind, (0, 255, 180))
+        if d.kind == "linear":
+            p1, p2 = d.extra["p1"], d.extra["p2"]
+            cv2.line(out, tuple(p1), tuple(p2), col, 2, cv2.LINE_AA)
+        else:
+            x, y, w, h = d.bbox
+            pad = 3
+            cv2.rectangle(out, (max(x - pad, 0), max(y - pad, 0)),
+                          (x + w + pad, y + h + pad), col, 1, cv2.LINE_AA)
+            r = max(w, h) // 2 + 8
+            cx, cy = int(d.centroid[0]), int(d.centroid[1])
+            cv2.circle(out, (cx, cy), r, col, 1, cv2.LINE_AA)
+    return out
+
+
+def index_map(rgb: np.ndarray, idx: np.ndarray, kind: str = "veg") -> np.ndarray:
+    cmap = cv2.COLORMAP_SUMMER if kind == "veg" else cv2.COLORMAP_OCEAN
+    n = np.clip((idx + 1) / 2.0, 0, 1)
+    cm = cv2.applyColorMap((n * 255).astype(np.uint8), cmap)
+    return cv2.cvtColor(cm, cv2.COLOR_BGR2RGB)
+
+
+def legend_payload(lc: LandCover) -> List[dict]:
+    out = []
+    from .landcover import CLASS_LABELS
+    for c in CLASSES:
+        f = lc.fractions.get(c, 0.0)
+        if f <= 0.0005:
+            continue
+        r, g, b = CLASS_COLORS[c]
+        out.append({"cls": c, "label": CLASS_LABELS[c],
+                    "color": f"rgb({r},{g},{b})", "fraction": round(f, 4),
+                    "area_km2": round(lc.areas_km2.get(c, 0.0), 4)})
+    out.sort(key=lambda d: -d["fraction"])
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# v2: uncertainty / severity visualisation (additive)
+# --------------------------------------------------------------------------- #
+def uncertainty_overlay(rgb: np.ndarray, uncertainty, alpha: float = 0.60) -> np.ndarray:
+    """Render per-pixel classification uncertainty (bright = less certain)."""
+    u = np.asarray(uncertainty, dtype=np.float32)
+    u = np.clip((u - float(u.min())) / (float(u.max()) - float(u.min()) + 1e-6), 0, 1)
+    cm = cv2.applyColorMap((u * 255).astype(np.uint8), cv2.COLORMAP_INFERNO)
+    cm = cv2.cvtColor(cm, cv2.COLOR_BGR2RGB)
+    return cv2.addWeighted(rgb, 1 - alpha, cm, alpha, 0)
+
+
+def severity_color(severity: str) -> tuple:
+    return {"LOW": (34, 211, 154), "MEDIUM": (255, 176, 32),
+            "HIGH": (255, 92, 92)}.get(str(severity).upper(), (142, 160, 189))
+
+
+def sar_overlay(rgb: np.ndarray, water_mask: np.ndarray, built_mask: np.ndarray,
+                alpha: float = 0.55) -> np.ndarray:
+    """Tint SAR-derived water (blue) / built-up (orange) rule-head masks."""
+    out = rgb.copy()
+    tint = np.zeros_like(rgb)
+    tint[water_mask] = (64, 140, 255)
+    tint[built_mask] = (255, 150, 40)
+    m = water_mask | built_mask
+    out[m] = cv2.addWeighted(rgb, 1 - alpha, tint, alpha, 0)[m]
+    return out
+
+
+def fusion_overlay(optical_rgb: np.ndarray, optical_water_mask: np.ndarray,
+                   optical_built_mask: np.ndarray, sar_water_mask: np.ndarray,
+                   sar_built_mask: np.ndarray, alpha: float = 0.55) -> np.ndarray:
+    """Joint optical+SAR rule-fusion overlay: agreement vs single-modality-only.
+
+    Classical rule head — no trained fusion model (v1 scaffolding, see
+    resource.md §3B). A pixel is "confirmed" (dark tint) when both
+    modalities agree; "optical-only" (light tint) when only the classical
+    optical classifier flags it, so cross-modal disagreement stays visible
+    instead of being silently resolved.
+    """
+    out = optical_rgb.copy()
+    water_both = optical_water_mask & sar_water_mask
+    water_opt_only = optical_water_mask & ~sar_water_mask
+    built_both = optical_built_mask & sar_built_mask
+    built_opt_only = optical_built_mask & ~sar_built_mask
+    tint = np.zeros_like(optical_rgb)
+    tint[water_opt_only] = (110, 190, 255)
+    tint[water_both] = (0, 90, 220)
+    tint[built_opt_only] = (255, 205, 130)
+    tint[built_both] = (220, 100, 0)
+    m = water_opt_only | water_both | built_opt_only | built_both
+    out[m] = cv2.addWeighted(optical_rgb, 1 - alpha, tint, alpha, 0)[m]
+    return out
+
+
+def hotspots_overlay(rgb: np.ndarray, hotspots: List[dict]) -> np.ndarray:
+    """Draw change-hotspot boxes with severity-tinted outlines."""
+    out = rgb.copy()
+    for i, h in enumerate(hotspots or []):
+        x, y, w, hh = (int(v) for v in h.get("bbox", [0, 0, 0, 0]))
+        col = severity_color(h.get("severity", "MEDIUM"))
+        cv2.rectangle(out, (x, y), (x + w, y + hh), col, 2, cv2.LINE_AA)
+        cv2.putText(out, f"H{i+1}", (x + 4, max(y - 6, 12)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 1, cv2.LINE_AA)
+    return out

@@ -1,0 +1,2 @@
+{"t1": "delta_t1.png", "t2": "delta_t2.png", "question": "What changed between these two dates, and where did the change occur?", "gold_changed_fraction": 0.04472, "gold_keywords": ["chang"]}
+{"t1": "delta_t1.png", "t2": "delta_t2.png", "question": "Has the built-up area increased, decreased, or remained unchanged?", "gold_keywords": ["increas", "built"]}

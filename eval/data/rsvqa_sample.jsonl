@@ -1,0 +1,5 @@
+{"image": "harbour_port.png", "question": "Is there any water in this image?", "gold": "yes"}
+{"image": "harbour_port.png", "question": "Are there any vessels in this image?", "gold": "yes"}
+{"image": "urban_mixed.png", "question": "Is there any water in this image?", "gold": "no"}
+{"image": "river_wetland.png", "question": "Is there any water in this image?", "gold": "yes"}
+{"image": "urban_mixed.png", "question": "Are there any vessels in this image?", "gold": "no"}

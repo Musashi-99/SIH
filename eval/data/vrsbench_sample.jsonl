@@ -1,0 +1,7 @@
+{"image": "harbour_port.png", "task": "vqa", "question": "What is the dominant land cover class in this image?", "gold_keywords": ["water", "built"]}
+{"image": "harbour_port.png", "task": "caption", "question": "Describe the land-cover and major objects visible in this image.", "gold_keywords": ["water", "vessel", "built"]}
+{"image": "harbour_port.png", "task": "grounding", "question": "Highlight the water body in this image.", "gold_keywords": ["water"]}
+{"image": "river_wetland.png", "task": "vqa", "question": "How much of the area is water?", "gold_keywords": ["%", "water"]}
+{"image": "river_wetland.png", "task": "caption", "question": "Describe this scene.", "gold_keywords": ["water", "vegetation"]}
+{"image": "urban_mixed.png", "task": "vqa", "question": "What is the dominant land cover class in this image?", "gold_keywords": ["built"]}
+{"image": "urban_mixed.png", "task": "grounding", "question": "Highlight the built-up area in this image.", "gold_keywords": ["built"]}

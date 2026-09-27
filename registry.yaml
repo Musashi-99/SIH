@@ -1,0 +1,123 @@
+# SatQuery AI — Agent / Tool Registry
+#
+# Every tool id referenced by core/query.py::_TOOLS_FOR MUST have an entry
+# here. This is the single source of truth for what the agentic controller
+# is allowed to select, execute and report in its audit trace. Judges see
+# exactly this: {task, models[], params} — no hidden reasoning.
+#
+# Fields:
+#   name        human-readable model/tool name
+#   version     semantic version, bumped whenever the algorithm changes
+#   type        classical | learned  (classical = deterministic CV/rules;
+#               learned = trained model weights — none shipped yet, see
+#               resource.md section 3B)
+#   modality    input modality this tool accepts: optical | sar | any
+#   params      fixed/permitted parameters recorded in every trace
+#   requires    scene preconditions the compat gate checks before selection
+#     nir: true         -> scene must expose a NIR band
+#     second_image: true -> a bi-temporal / cross-modal pair must be loaded
+
+tools:
+  landcover.segment:
+    name: KMeans-PhysicsRules-LandCover
+    version: "1.1"
+    type: classical
+    modality: any
+    params: {k: adaptive_or_fixed, distance: euclidean}
+    requires: {}
+
+  landcover.quality:
+    name: LandCover-Quality-Estimator
+    version: "1.1"
+    type: classical
+    modality: any
+    params: {metric: cluster_margin_confidence}
+    requires: {}
+
+  landcover.class_mask:
+    name: LandCover-ClassMask
+    version: "1.1"
+    type: classical
+    modality: any
+    params: {}
+    requires: {}
+
+  objects.summarize:
+    name: Contrast-Morphology-ObjectDetector
+    version: "1.1"
+    type: classical
+    modality: optical
+    params: {families: "vessel,bright_target,linear"}
+    requires: {}
+
+  features.compute:
+    name: Spectral-Feature-Engine
+    version: "2.0"
+    type: classical
+    modality: any
+    params: {indices: "NDVI/NDWI or VARI/ExG proxy"}
+    requires: {}
+
+  features.compute_all_indices:
+    name: Spectral-Index-Suite
+    version: "2.0"
+    type: classical
+    modality: optical
+    params: {indices: "NDVI,NDWI,SAVI,EVI,GNDVI,VARI,ExG"}
+    requires: {}
+
+  features.spatial_statistics:
+    name: Spatial-Statistics-Engine
+    version: "2.0"
+    type: classical
+    modality: any
+    params: {stats: "brightness,saturation,texture,edge_density"}
+    requires: {}
+
+  change.detect:
+    name: ORB-RANSAC-ECC-ChangeVectorAnalysis
+    version: "1.1"
+    type: classical
+    modality: optical
+    params: {registration: "ORB/RANSAC or ECC", threshold: otsu}
+    requires: {second_image: true}
+
+  change.severity:
+    name: Change-Severity-Classifier
+    version: "1.1"
+    type: classical
+    modality: optical
+    params: {low: 0.02, high: 0.08}
+    requires: {second_image: true}
+
+  scene.px_area:
+    name: GSD-Pixel-Area-Estimator
+    version: "2.0"
+    type: classical
+    modality: any
+    params: {}
+    requires: {}
+
+  evidence.graph:
+    name: Evidence-Graph-Tracer
+    version: "2.0"
+    type: classical
+    modality: any
+    params: {}
+    requires: {}
+
+  sar.preprocess:
+    name: SAR-Backscatter-Speckle-Preprocessor
+    version: "1.0"
+    type: classical
+    modality: sar
+    params: {stretch: log_db_2_98pct, speckle_filter: median_5x5}
+    requires: {second_image: true}
+
+  fusion.joint_mask:
+    name: Optical-SAR-JointMask-RuleFusion
+    version: "1.0"
+    type: classical
+    modality: any
+    params: {rule: "water: backscatter<p25 & texture<p40; built_up: backscatter>p75 & texture>p70"}
+    requires: {second_image: true}
