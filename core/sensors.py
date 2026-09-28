@@ -1,18 +1,102 @@
-"""SatQuery AI v2 — sensor / band abstraction.
-
-Instead of assuming ``RGB means fixed wavelengths`` everywhere, the pipeline
-resolves a lightweight :class:`BandMapping` at ingestion time. Spectral-index
-code then asks the mapping which logical bands exist instead of guessing.
-
-Only mappings flagged ``verified=True`` are claimed as supported. Planned
-sensors ship their band tables for future use but are explicitly marked
-experimental — the system never claims to support a sensor it cannot
-actually ingest.
-"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+
+@dataclass(frozen=True)
+class SensorSpec:
+    name: str
+    sensor_type: str  # 'optical' | 'sar'
+    bands: int
+    band_names: List[str]
+    resolutions: List[float]  # meters
+    notes: str = ""
+
+
+# A small registry of common sensors with conservative/default specs.
+STANDARD_SENSORS: Dict[str, SensorSpec] = {
+    "Sentinel-2": SensorSpec(
+        name="Sentinel-2",
+        sensor_type="optical",
+        bands=13,
+        band_names=[
+            "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B10", "B11", "B12"
+        ],
+        resolutions=[10.0, 20.0, 60.0],
+        notes="Multispectral MSI (ESA) standard band set",
+    ),
+    "Sentinel-1": SensorSpec(
+        name="Sentinel-1",
+        sensor_type="sar",
+        bands=2,
+        band_names=["VV", "VH"],
+        resolutions=[10.0],
+        notes="C-band SAR GRD typical dual-polarisation (VV/VH)",
+    ),
+    "Cartosat-2S": SensorSpec(
+        name="Cartosat-2S",
+        sensor_type="optical",
+        bands=5,
+        band_names=["PAN", "B2", "B3", "B4", "B5"],
+        resolutions=[0.6, 2.5],
+        notes=(
+            "High-resolution PAN (≈0.6m) + multispectral (~2.5m). "
+            "Vendor/resolution may vary by product/processing."
+        ),
+    ),
+    "RISAT-1": SensorSpec(
+        name="RISAT-1",
+        sensor_type="sar",
+        bands=1,
+        band_names=["HH"],
+        resolutions=[3.0],
+        notes=(
+            "C-band SAR (RISAT-1) — mode-dependent resolution; default conservative value = 3m"
+        ),
+    ),
+}
+
+
+def get_sensor(name: str) -> SensorSpec:
+    """Return a SensorSpec by name.
+
+    Lookup is case-insensitive and tolerates underscores or dashes.
+    Examples that resolve to the same spec: "SENTINEL_2", "sentinel-2", "Sentinel-2".
+    Raises KeyError if no matching sensor is found.
+    """
+    # fast path: exact key
+    if name in STANDARD_SENSORS:
+        return STANDARD_SENSORS[name]
+
+    def _normalize(s: str) -> str:
+        return s.strip().lower().replace("_", "-").replace(" ", "-")
+
+    # build normalized map once (module-level cache via function attribute)
+    if not hasattr(get_sensor, "_norm_map"):
+        norm_map = { _normalize(k): k for k in STANDARD_SENSORS.keys() }
+        # also allow keys without the dash (e.g. 'sentinel2')
+        for k in list(STANDARD_SENSORS.keys()):
+            nk = _normalize(k).replace("-", "")
+            if nk not in norm_map:
+                norm_map[nk] = k
+        get_sensor._norm_map = norm_map
+
+    key = _normalize(name)
+    norm_map = getattr(get_sensor, "_norm_map")
+    if key in norm_map:
+        return STANDARD_SENSORS[norm_map[key]]
+    # fallback: try removing dashes/underscores
+    key_nodash = key.replace("-", "")
+    if key_nodash in norm_map:
+        return STANDARD_SENSORS[norm_map[key_nodash]]
+
+    raise KeyError(f"Unknown sensor: {name}")
+
+
+# ---------------------------------------------------------------------------
+# Backwards-compatible lightweight band-mapping utilities (original repo)
+# ---------------------------------------------------------------------------
 
 # Logical band names used across the pipeline.
 BLUE = "blue"

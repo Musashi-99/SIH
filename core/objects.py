@@ -137,7 +137,13 @@ def linear_structures(scene: Scene, fs: FeatureStack, top: int = 40) -> List[Det
     out: List[Detection] = []
     if lines is None:
         return out
-    for l in lines[:, 0, :]:
+    # HoughLinesP may return shape (N,1,4) or (N,4); normalize to (M,4)
+    try:
+        lines_arr = lines.reshape(-1, 4)
+    except Exception:
+        # defensive: fallback to iterating as-is
+        lines_arr = lines
+    for l in lines_arr:
         x1, y1, x2, y2 = map(int, l)
         length = float(np.hypot(x2 - x1, y2 - y1))
         ang = float(np.degrees(np.arctan2(y2 - y1, x2 - x1)) % 180)
