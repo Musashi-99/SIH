@@ -121,3 +121,11 @@ tools:
     modality: any
     params: {rule: "water: backscatter<p25 & texture<p40; built_up: backscatter>p75 & texture>p70"}
     requires: {second_image: true}
+
+  grounding.groundingdino:
+    name: GroundingDINO-TextConditioned-Localiser
+    version: "0.1"
+    type: learned
+    modality: optical
+    params: {weights: "weights/groundingdino_swint_ogc.pth", confidence_threshold: 0.3}
+    requires: {}
