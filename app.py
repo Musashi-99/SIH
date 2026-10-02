@@ -1009,6 +1009,24 @@ app.mount("/samples", StaticFiles(directory=SAMPLES), name="samples")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+# React frontend (built with `npm run build` in ../frontend). Falls back to the
+# legacy single-file UI when no build exists.
+FRONTEND_DIST = os.path.join(os.path.dirname(BASE), "frontend", "dist")
+_REACT_INDEX = os.path.join(FRONTEND_DIST, "index.html")
+if os.path.isdir(os.path.join(FRONTEND_DIST, "assets")):
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")
+
+
 @app.get("/")
 def index():
+    if os.path.isfile(_REACT_INDEX):
+        return FileResponse(_REACT_INDEX)
+    return FileResponse(os.path.join(STATIC, "index.html"))
+
+
+@app.get("/app")
+@app.get("/app/{path:path}")
+def spa(path: str = ""):
+    if os.path.isfile(_REACT_INDEX):
+        return FileResponse(_REACT_INDEX)
     return FileResponse(os.path.join(STATIC, "index.html"))
